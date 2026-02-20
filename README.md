@@ -133,10 +133,49 @@ await client.lookup('agent-id');
 | 20+ | 🟡 | New/Limited | ⚠️ |
 | 0+ | ⚪ | Unverified | ❌ |
 
+## Auto-Registration
+
+Register your agent automatically on first use:
+
+```typescript
+import { ensureRegistered, checkBeforeTransaction } from '@trustthenverify/sdk';
+
+// Auto-register on startup
+const myAgentId = await ensureRegistered({
+  name: "MyAgent",
+  npub: process.env.MY_NPUB,           // Optional - enables zap tracking
+  lightning_pubkey: process.env.MY_LN, // Optional - enables Lightning verification
+  description: "What my agent does"
+});
+
+console.log("Registered as:", myAgentId);
+```
+
+## Pre-Transaction Check
+
+Check trust before sending payments:
+
+```typescript
+const check = await checkBeforeTransaction("target-agent-id", 5000); // 5000 sats
+
+if (check.proceed) {
+  console.log("Safe to transact:", check.reason);
+  await payAgent("target-agent-id", 5000);
+} else {
+  console.log("Caution:", check.reason);
+  console.log("Risk level:", check.riskLevel); // 'low' | 'medium' | 'high' | 'unknown'
+}
+```
+
+Higher amounts require higher trust scores:
+- < 1000 sats: Score 20+ required
+- 1000-10000 sats: Score 40+ required  
+- > 10000 sats: Score 60+ required
+
 ## Related
 
-- [trust-mcp](https://github.com/trustthenverify/trust-mcp) - MCP Server for Claude/OpenClaw
-- [openclaw-trust-skill](https://github.com/trustthenverify/openclaw-trust-skill) - OpenClaw skill
+- [trust-mcp](https://github.com/BillyTheManBot/trust-mcp) - MCP Server for Claude/OpenClaw
+- [openclaw-trust-skill](https://github.com/BillyTheManBot/openclaw-trust-skill) - OpenClaw skill
 - [trustthenverify.com](https://trustthenverify.com) - The registry
 
 ## License
