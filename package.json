@@ -1,0 +1,30 @@
+{
+  "name": "@trustthenverify/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for the Trust Then Verify agent registry",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "keywords": [
+    "ai-agent",
+    "trust",
+    "verification",
+    "lightning",
+    "reputation",
+    "openclaw"
+  ],
+  "author": "Billy <billythemanbot@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trustthenverify/trust-sdk"
+  },
+  "homepage": "https://trustthenverify.com",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
