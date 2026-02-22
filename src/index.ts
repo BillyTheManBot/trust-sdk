@@ -31,12 +31,26 @@ export interface Agent {
   description?: string;
   contact?: string;
   trust_score?: number;
+  trust_tier?: number;
   capabilities?: string[];
   lightning_pubkey?: string;
   nostr_npub?: string;
   x_handle?: string;
   website?: string;
   created_at?: string;
+}
+
+export interface PaginatedAgents {
+  agents: Agent[];
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface ListAgentsOptions {
+  page?: number;
+  limit?: number;
 }
 
 export interface RegisterResponse {
@@ -102,13 +116,56 @@ export class TrustClient {
   }
 
   /**
-   * List all registered agents
+   * List registered agents (paginated)
    */
-  async listAgents(): Promise<Agent[]> {
-    const res = await this.safeFetch(`${this.baseUrl}/registry/agents`);
-    if (!res.ok) return [];
+  async listAgents(options?: ListAgentsOptions): Promise<PaginatedAgents> {
+    const params = new URLSearchParams();
+    if (options?.page) params.set("page", String(options.page));
+    if (options?.limit) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    const res = await this.safeFetch(`${this.baseUrl}/registry/agents${qs ? `?${qs}` : ""}`);
+    if (!res.ok) return { agents: [], page: 1, limit: 50, total: 0, total_pages: 0 };
     const data = await res.json();
-    return data.agents || [];
+    return {
+      agents: data.agents || [],
+      page: data.page || 1,
+      limit: data.limit || 50,
+      total: data.total || 0,
+      total_pages: data.total_pages || 0,
+    };
+  }
+
+  /**
+   * Update an agent's fields (requires auth secret = contact value)
+   */
+  async updateAgent(
+    agentId: string,
+    updates: Partial<Pick<Agent, "description" | "capabilities" | "lightning_pubkey" | "x_handle" | "website" | "contact">>,
+    authSecret: string
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const res = await this.safeFetch(`${this.baseUrl}/registry/agent/${agentId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Agent-Secret": authSecret,
+      },
+      body: JSON.stringify(updates),
+    });
+    return res.json();
+  }
+
+  /**
+   * Soft-delete an agent (requires auth secret = contact value)
+   */
+  async deleteAgent(
+    agentId: string,
+    authSecret: string
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const res = await this.safeFetch(`${this.baseUrl}/registry/agent/${agentId}`, {
+      method: "DELETE",
+      headers: { "X-Agent-Secret": authSecret },
+    });
+    return res.json();
   }
 
   /**
@@ -205,7 +262,10 @@ export const register = (name: string, contact: string, options?: Parameters<Tru
   trust.register(name, contact, options);
 export const review = (agentId: string, rating: number, comment: string, options?: Parameters<TrustClient["review"]>[3]) =>
   trust.review(agentId, rating, comment, options);
-export const listAgents = () => trust.listAgents();
+export const listAgents = (options?: ListAgentsOptions) => trust.listAgents(options);
+export const updateAgent = (agentId: string, updates: Parameters<TrustClient["updateAgent"]>[1], authSecret: string) =>
+  trust.updateAgent(agentId, updates, authSecret);
+export const deleteAgent = (agentId: string, authSecret: string) => trust.deleteAgent(agentId, authSecret);
 export const isTrusted = (agentId: string) => trust.isTrusted(agentId);
 export const badgeUrl = (agentId: string) => trust.badgeUrl(agentId);
 
@@ -229,16 +289,16 @@ export async function ensureRegistered(options: {
   lightning_pubkey?: string;
   description?: string;
 }): Promise<string> {
-  // Check if already registered by name
-  const agents = await trust.listAgents();
-  const existing = agents.find(a => a.name.toLowerCase() === options.name.toLowerCase());
+  // Search by name instead of listing all agents
+  const result = await trust.listAgents({ limit: 50 });
+  const existing = result.agents.find(a => a.name.toLowerCase() === options.name.toLowerCase());
 
   if (existing) {
     return existing.id;
   }
 
   // Register new agent
-  const result = await trust.register(
+  const regResult = await trust.register(
     options.name,
     options.contact || `sdk-auto-${Date.now()}`,
     {
@@ -248,7 +308,7 @@ export async function ensureRegistered(options: {
     }
   );
 
-  return result.agent_id;
+  return regResult.agent_id;
 }
 
 /**
