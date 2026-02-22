@@ -1,23 +1,28 @@
 /**
  * Trust Then Verify SDK
- * 
+ *
  * TypeScript SDK for the AI agent trust registry.
  * https://trustthenverify.com
  */
 
+export interface TrustDimension {
+  score: number;
+  max: number;
+}
+
 export interface TrustScore {
   total: number;
   confidence: number;
-  tier: number;
-  tier_label: string;
-  badge: string;
   dimensions: {
-    identity: { score: number; max: number };
-    economic: { score: number; max: number };
-    track_record: { score: number; max: number };
-    social: { score: number; max: number };
-    behavioral: { score: number; max: number };
+    identity: TrustDimension;
+    economic: TrustDimension;
+    social: TrustDimension;
+    behavioral: TrustDimension;
   };
+  risk_flags: string[];
+  safe_to_transact: boolean;
+  risk_level: "low" | "medium" | "high" | "unknown";
+  evidence_summary: string;
 }
 
 export interface Agent {
@@ -47,6 +52,13 @@ export interface ReviewResponse {
   error?: string;
 }
 
+export class TrustRegistryOfflineError extends Error {
+  constructor(message = "Trust registry is temporarily offline") {
+    super(message);
+    this.name = "TrustRegistryOfflineError";
+  }
+}
+
 export class TrustClient {
   private baseUrl: string;
 
@@ -54,11 +66,28 @@ export class TrustClient {
     this.baseUrl = baseUrl.replace(/\/$/, "");
   }
 
+  private async safeFetch(url: string, init?: RequestInit): Promise<Response> {
+    let res: Response;
+    try {
+      res = await fetch(url, init);
+    } catch (err: any) {
+      throw new TrustRegistryOfflineError(
+        `Registry unreachable: ${err.message || "network error"}`
+      );
+    }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new TrustRegistryOfflineError(
+        `Registry returned ${res.status}`
+      );
+    }
+    return res;
+  }
+
   /**
    * Look up an agent's trust score
    */
   async lookup(agentId: string): Promise<{ agent: Agent; trust_score: TrustScore } | null> {
-    const res = await fetch(`${this.baseUrl}/registry/trust/${agentId}`);
+    const res = await this.safeFetch(`${this.baseUrl}/v1/trust/${agentId}`);
     if (!res.ok) return null;
     return res.json();
   }
@@ -67,7 +96,7 @@ export class TrustClient {
    * Get an agent by ID
    */
   async getAgent(agentId: string): Promise<Agent | null> {
-    const res = await fetch(`${this.baseUrl}/registry/agent/${agentId}`);
+    const res = await this.safeFetch(`${this.baseUrl}/registry/agent/${agentId}`);
     if (!res.ok) return null;
     return res.json();
   }
@@ -76,7 +105,7 @@ export class TrustClient {
    * List all registered agents
    */
   async listAgents(): Promise<Agent[]> {
-    const res = await fetch(`${this.baseUrl}/registry/agents`);
+    const res = await this.safeFetch(`${this.baseUrl}/registry/agents`);
     if (!res.ok) return [];
     const data = await res.json();
     return data.agents || [];
@@ -97,11 +126,15 @@ export class TrustClient {
       website?: string;
     }
   ): Promise<RegisterResponse> {
-    const res = await fetch(`${this.baseUrl}/register`, {
+    const res = await this.safeFetch(`${this.baseUrl}/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, contact, ...options }),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Registration failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -118,7 +151,7 @@ export class TrustClient {
       proof_of_payment?: string;
     }
   ): Promise<ReviewResponse> {
-    const res = await fetch(`${this.baseUrl}/registry/review`, {
+    const res = await this.safeFetch(`${this.baseUrl}/registry/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -128,6 +161,10 @@ export class TrustClient {
         ...options,
       }),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Review failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -174,10 +211,10 @@ export const badgeUrl = (agentId: string) => trust.badgeUrl(agentId);
 
 /**
  * Auto-register helper for agents
- * 
+ *
  * Ensures the calling agent is registered before making lookups.
  * Returns the agent ID for future reference.
- * 
+ *
  * @example
  * const myId = await ensureRegistered({
  *   name: "MyAgent",
@@ -195,11 +232,11 @@ export async function ensureRegistered(options: {
   // Check if already registered by name
   const agents = await trust.listAgents();
   const existing = agents.find(a => a.name.toLowerCase() === options.name.toLowerCase());
-  
+
   if (existing) {
     return existing.id;
   }
-  
+
   // Register new agent
   const result = await trust.register(
     options.name,
@@ -210,15 +247,15 @@ export async function ensureRegistered(options: {
       lightning_pubkey: options.lightning_pubkey,
     }
   );
-  
+
   return result.agent_id;
 }
 
 /**
  * Check trust before transaction helper
- * 
+ *
  * Returns detailed recommendation for whether to proceed.
- * 
+ *
  * @example
  * const check = await checkBeforeTransaction("target-agent", 1000);
  * if (check.proceed) {
@@ -237,7 +274,7 @@ export async function checkBeforeTransaction(
   riskLevel: "low" | "medium" | "high" | "unknown";
 }> {
   const result = await trust.lookup(agentId);
-  
+
   if (!result) {
     return {
       proceed: false,
@@ -246,13 +283,13 @@ export async function checkBeforeTransaction(
       riskLevel: "unknown",
     };
   }
-  
+
   const score = result.trust_score.total;
   const tier = TrustClient.getTier(score);
-  
+
   // High amounts require higher trust
   const requiredScore = amountSats > 10000 ? 60 : amountSats > 1000 ? 40 : 20;
-  
+
   if (score >= requiredScore) {
     return {
       proceed: true,
@@ -261,7 +298,7 @@ export async function checkBeforeTransaction(
       riskLevel: tier.safe ? "low" : "medium",
     };
   }
-  
+
   return {
     proceed: false,
     score,
