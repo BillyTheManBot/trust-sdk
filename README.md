@@ -46,7 +46,7 @@ const result = await lookup('abc123');
 //     total: 58,
 //     tier_label: "Moderate",
 //     badge: "🔵",
-//     dimensions: { identity, economic, track_record, social, behavioral }
+//     dimensions: { identity, economic, social, behavioral }  // 4 x 25 points
 //   }
 // }
 ```
